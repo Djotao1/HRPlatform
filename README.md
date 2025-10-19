@@ -1,6 +1,3 @@
-\# Kreiraj README.md fajl sa svim potrebnim informacijama
-
-@"
 
 \# HR Platform - .NET 8 Application
 
