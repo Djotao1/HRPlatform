@@ -1,0 +1,524 @@
+﻿@page "/candidates"
+@using HRPlatform.Application.Candidates.DTOs
+@using HRPlatform.Application.Skills.DTOs
+@using HRPlatform.Web.Blazor.Services
+@inject ICandidateApiService CandidateService
+@inject ISkillApiService SkillService
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+@rendermode InteractiveServer
+
+<h3>Candidates Management</h3>
+
+<!-- Search Form -->
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">Search Candidates</h5>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text">
+                        @if (isSearching)
+                        {
+                            <div class="spinner-border spinner-border-sm" role="status">
+                                <span class="visually-hidden">Searching...</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <i class="fas fa-search"></i>
+                        }
+                    </span>
+                    <input value="@searchName"
+                           @oninput="OnSearchInput"
+                           class="form-control"
+                           placeholder="Type to search by name..." />
+                    @if (!string.IsNullOrEmpty(searchName))
+                    {
+                        <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearchName">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="col-md-4">
+                <select value="@selectedSkillId" @onchange="OnSkillFilterChanged" class="form-control">
+                    <option value="0">All Skills</option>
+                    @foreach (var skill in availableSkills)
+                    {
+                        <option value="@skill.Id">@skill.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary" @onclick="ClearSearch" title="Clear all filters">
+                        <i class="fas fa-undo"></i> Clear
+                    </button>
+                    <button class="btn btn-outline-primary" @onclick="RefreshCandidates" title="Refresh list">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+        @if (!string.IsNullOrEmpty(searchName) || selectedSkillId > 0)
+        {
+            <div class="mt-2">
+                <small class="text-muted">
+                    @if (!string.IsNullOrEmpty(searchName) && selectedSkillId > 0)
+                    {
+                        <span>Showing candidates with name containing "<strong>@searchName</strong>" and skill "<strong>@GetSelectedSkillName()</strong>"</span>
+                    }
+                    else if (!string.IsNullOrEmpty(searchName))
+                    {
+                        <span>Showing candidates with name containing "<strong>@searchName</strong>"</span>
+                    }
+                    else if (selectedSkillId > 0)
+                    {
+                        <span>Showing candidates with skill "<strong>@GetSelectedSkillName()</strong>"</span>
+                    }
+                </small>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="mb-3">
+    <button class="btn btn-primary" @onclick="ShowAddCandidate">
+        <i class="fas fa-plus"></i> Add New Candidate
+    </button>
+    <span class="ms-2 text-muted">
+        @if (candidates != null)
+        {
+            <small>Total: @candidates.Count candidate(s)</small>
+        }
+    </span>
+</div>
+
+<!-- Candidates Table -->
+@if (candidates == null)
+{
+    <div class="text-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <div class="mt-2">Loading candidates...</div>
+    </div>
+}
+else if (!candidates.Any())
+{
+    <div class="alert alert-info text-center">
+        <i class="fas fa-info-circle"></i> No candidates found.
+        @if (!string.IsNullOrEmpty(searchName) || selectedSkillId > 0)
+        {
+            <div class="mt-1">
+                <button class="btn btn-sm btn-outline-primary" @onclick="ClearSearch">
+                    Clear filters to see all candidates
+                </button>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+            <thead class="table-dark">
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Contact</th>
+                    <th>Date of Birth</th>
+                    <th>Skills</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var candidate in candidates)
+                {
+                    <tr>
+                        <td>
+                            <strong>@candidate.FullName</strong>
+                            @if (!string.IsNullOrEmpty(searchName) && candidate.FullName.Contains(searchName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <br />
+                    
+                                <small class="text-success">Matches your search</small>
+                            }
+                        </td>
+                        <td>@candidate.Email</td>
+                        <td>@candidate.ContactNumber</td>
+                        <td>@candidate.DateOfBirth.ToString("yyyy-MM-dd")</td>
+                        <td>
+                            @if (candidate.Skills != null && candidate.Skills.Any())
+                            {
+                                @foreach (var skill in candidate.Skills)
+                                {
+                                    <span class="badge bg-primary me-1 mb-1">@skill.Name</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="text-muted">No skills</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => EditCandidate(candidate)" title="Edit candidate">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCandidate(candidate)" title="Delete candidate">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<!-- Add/Edit Candidate Modal -->
+@if (showModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editingCandidate?.Id > 0 ? "Edit Candidate" : "Add Candidate")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <EditForm Model="@candidateForm" OnValidSubmit="@SaveCandidate">
+                        <DataAnnotationsValidator />
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="fullName" class="form-label">Full Name *</label>
+                                    <InputText id="fullName" @bind-Value="candidateForm.FullName" class="form-control" />
+                                    <ValidationMessage For="@(() => candidateForm.FullName)" />
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="email" class="form-label">Email *</label>
+                                    <InputText id="email" @bind-Value="candidateForm.Email" class="form-control" />
+                                    <ValidationMessage For="@(() => candidateForm.Email)" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="contactNumber" class="form-label">Contact Number *</label>
+                                    <InputText id="contactNumber" @bind-Value="candidateForm.ContactNumber" class="form-control" />
+                                    <ValidationMessage For="@(() => candidateForm.ContactNumber)" />
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="dateOfBirth" class="form-label">Date of Birth *</label>
+                                    <InputDate id="dateOfBirth" @bind-Value="candidateForm.DateOfBirth" class="form-control" />
+                                    <ValidationMessage For="@(() => candidateForm.DateOfBirth)" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Skills</label>
+                            <div class="border p-3" style="max-height: 200px; overflow-y: auto;">
+                                @if (availableSkills.Any())
+                                {
+                                    <div class="row">
+                                        @foreach (var skill in availableSkills)
+                                        {
+                                            <div class="col-md-6 mb-2">
+                                                <div class="form-check">
+                                                    <input class="form-check-input"
+                                                           type="checkbox"
+                                                           id="skill-@skill.Id"
+                                                           checked="@(selectedSkillIds.Contains(skill.Id))"
+                                                           @onchange="@((e) => ToggleSkill(skill.Id, (bool)e.Value))" />
+                                                    <label class="form-check-label" for="skill-@skill.Id">
+                                                        @skill.Name
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="text-muted">No skills available</div>
+                                }
+                            </div>
+                            <small class="form-text text-muted">Select skills from the available list</small>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger">@errorMessage</div>
+                        }
+
+                        <div class="modal-footer">
+                            <button type="submit" class="btn btn-primary" disabled="@isLoading">
+                                @if (isLoading)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    <span class="ms-2">Saving...</span>
+                                }
+                                else
+                                {
+                                    <span>Save</span>
+                                }
+                            </button>
+                            <button type="button" class="btn btn-secondary" @onclick="CloseModal" disabled="@isLoading">Cancel</button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CandidateDto> candidates = new();
+    private List<SkillDto> availableSkills = new();
+    private bool showModal = false;
+    private CreateCandidateRequest candidateForm = new();
+    private CandidateDto? editingCandidate;
+    private string searchName = "";
+    private int selectedSkillId = 0;
+    private HashSet<int> selectedSkillIds = new();
+    private string errorMessage = "";
+    private bool isLoading = false;
+    private bool isSearching = false;
+    private CancellationTokenSource searchCancellationTokenSource = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCandidates();
+        await LoadSkills();
+    }
+
+    private async Task LoadCandidates()
+    {
+        try
+        {
+            candidates = await CandidateService.GetCandidatesAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading candidates: {ex.Message}";
+        }
+    }
+
+    private async Task LoadSkills()
+    {
+        try
+        {
+            availableSkills = await SkillService.GetSkillsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading skills: {ex.Message}";
+        }
+    }
+
+    private async void OnSearchInput(ChangeEventArgs e)
+    {
+        searchName = e.Value?.ToString() ?? "";
+        await PerformSearch();
+    }
+
+    private async void OnSkillFilterChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int skillId))
+        {
+            selectedSkillId = skillId;
+            await PerformSearch();
+        }
+    }
+
+    private async Task PerformSearch()
+    {
+        // Cancel previous search if still running
+        searchCancellationTokenSource.Cancel();
+        searchCancellationTokenSource = new CancellationTokenSource();
+
+        isSearching = true;
+        StateHasChanged();
+
+        try
+        {
+            // Add a small delay to avoid too many API calls while typing
+            await Task.Delay(300, searchCancellationTokenSource.Token);
+
+            var skills = selectedSkillId > 0
+                ? new List<string> { availableSkills.First(s => s.Id == selectedSkillId).Name }
+                : new List<string>();
+
+            candidates = await CandidateService.SearchCandidatesAsync(searchName, skills);
+        }
+        catch (OperationCanceledException)
+        {
+            // Search was cancelled, ignore
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error searching candidates: {ex.Message}";
+        }
+        finally
+        {
+            isSearching = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshCandidates()
+    {
+        await LoadCandidates();
+    }
+
+    private async Task ClearSearch()
+    {
+        searchName = "";
+        selectedSkillId = 0;
+        await LoadCandidates();
+    }
+
+    private void ClearSearchName()
+    {
+        searchName = "";
+        _ = PerformSearch(); // Fire and forget
+    }
+
+    private string GetSelectedSkillName()
+    {
+        return availableSkills.FirstOrDefault(s => s.Id == selectedSkillId)?.Name ?? "";
+    }
+
+    private void ShowAddCandidate()
+    {
+        candidateForm = new CreateCandidateRequest
+        {
+            DateOfBirth = DateTime.Now.AddYears(-25) // Default to 25 years old
+        };
+        editingCandidate = null;
+        selectedSkillIds.Clear();
+        errorMessage = "";
+        showModal = true;
+    }
+
+    private void EditCandidate(CandidateDto candidate)
+    {
+        candidateForm = new CreateCandidateRequest
+        {
+            FullName = candidate.FullName,
+            Email = candidate.Email,
+            ContactNumber = candidate.ContactNumber,
+            DateOfBirth = candidate.DateOfBirth
+        };
+
+        // Pre-select current skills
+        selectedSkillIds.Clear();
+        if (candidate.Skills != null)
+        {
+            foreach (var skill in candidate.Skills)
+            {
+                var existingSkill = availableSkills.FirstOrDefault(s => s.Name == skill.Name);
+                if (existingSkill != null)
+                {
+                    selectedSkillIds.Add(existingSkill.Id);
+                }
+            }
+        }
+
+        editingCandidate = candidate;
+        errorMessage = "";
+        showModal = true;
+    }
+
+    private void ToggleSkill(int skillId, bool isSelected)
+    {
+        if (isSelected)
+            selectedSkillIds.Add(skillId);
+        else
+            selectedSkillIds.Remove(skillId);
+    }
+
+    private async Task SaveCandidate()
+    {
+        isLoading = true;
+        errorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            // Convert selected skill IDs to skill names
+            candidateForm.Skills = availableSkills
+                .Where(s => selectedSkillIds.Contains(s.Id))
+                .Select(s => s.Name)
+                .ToList();
+
+            if (editingCandidate?.Id > 0)
+            {
+                var updateRequest = new UpdateCandidateRequest
+                {
+                    FullName = candidateForm.FullName,
+                    ContactNumber = candidateForm.ContactNumber,
+                    DateOfBirth = candidateForm.DateOfBirth,
+                    Skills = candidateForm.Skills
+                };
+                await CandidateService.UpdateCandidateAsync(editingCandidate.Id, updateRequest);
+            }
+            else
+            {
+                await CandidateService.CreateCandidateAsync(candidateForm);
+            }
+
+            CloseModal();
+            await LoadCandidates(); // Refresh the list
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving candidate: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteCandidate(CandidateDto candidate)
+    {
+        if (await JSRuntime.InvokeAsync<bool>("confirm", $"Are you sure you want to delete candidate '{candidate.FullName}'?"))
+        {
+            try
+            {
+                await CandidateService.DeleteCandidateAsync(candidate.Id);
+                await LoadCandidates(); // Refresh the list
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Error deleting candidate: {ex.Message}";
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        selectedSkillIds.Clear();
+        errorMessage = "";
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        searchCancellationTokenSource?.Cancel();
+        searchCancellationTokenSource?.Dispose();
+    }
+}
